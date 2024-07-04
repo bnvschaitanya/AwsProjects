@@ -1,4 +1,4 @@
-##Scaling and Descaling of Instances using Hand Detection 
+##Scaling and Descaling of Instances using Hand Detection that are attached and detached to ELB Load Balancer
 #!/usr/bin/env python
 # coding: utf-8
 
