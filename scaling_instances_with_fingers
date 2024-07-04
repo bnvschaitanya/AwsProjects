@@ -1,121 +1,90 @@
-'''scaling the instances with hand detection'''
+##Scaling and Descaling of Instances using Hand Detection 
 #!/usr/bin/env python
 # coding: utf-8
-
-# In[1]:
-
 
 import cv2
 import boto3
 import time
 from cvzone.HandTrackingModule import HandDetector
 
-
-# In[2]:
-
-
+# Initialize AWS resources
 ec2 = boto3.resource('ec2')
 elb = boto3.client('elbv2')
-# list of all OS running
 allOS = []
 
+# Constants
+AMI_ID = "ami-0a2acf24c0d86e927"
+INSTANCE_TYPE = "t2.micro"
+SECURITY_GROUP_ID = 'sg-0072cb1b72ca4eeaf'
+TARGET_GROUP_ARN = 'arn:aws:elasticloadbalancing:ap-south-1:881559863141:targetgroup/testtg/5eb53fb428255398'
 
-# In[3]:
+def launch_instance():
+    try:
+        instances = ec2.create_instances(
+            ImageId=AMI_ID,
+            MinCount=1,
+            MaxCount=1,
+            InstanceType=INSTANCE_TYPE,
+            SecurityGroupIds=[SECURITY_GROUP_ID],
+        )
+        instance_id = instances[0].id
+        allOS.append(instance_id)
+        time.sleep(30)  # Wait for the instance to initialize
+        elb.register_targets(
+            TargetGroupArn=TARGET_GROUP_ARN,
+            Targets=[{'Id': instance_id}],
+        )
+        print("Total OS : ", len(allOS))
+    except Exception as e:
+        print(f"Error launching instance: {e}")
 
+def terminate_instance():
+    try:
+        if allOS:
+            instance_id = allOS.pop()
+            ec2.instances.filter(InstanceIds=[instance_id]).terminate()
+            elb.deregister_targets(
+                TargetGroupArn=TARGET_GROUP_ARN,
+                Targets=[{'Id': instance_id}],
+            )
+            print("Remaining OS : ", len(allOS))
+        else:
+            print("No more OS is running")
+    except Exception as e:
+        print(f"Error terminating instance: {e}")
 
-def LaunchOS():
-    instances = ec2.create_instances(
-        ImageId="ami-0a2acf24c0d86e927",
-        MinCount=1,
-        MaxCount=1,
-        InstanceType="t2.micro",
-        SecurityGroupIds=[
-        'sg-0072cb1b72ca4eeaf',
-    ],
-    )
+def main():
+    # Initialize hand detector
+    detector = HandDetector(maxHands=1, detectionCon=0.8)
+    # Initialize video capture
+    cap = cv2.VideoCapture(0)
 
-    OSid = instances[0].id
-    allOS.append(OSid)
-    
-    time.sleep(30)
-    elb.register_targets(TargetGroupArn='arn:aws:elasticloadbalancing:ap-south-1:881559863141:targetgroup/testtg/5eb53fb428255398',
-    Targets=[
-        {
-            'Id': OSid,
-        },
-       
-    ],
-                    )
-    
-    # print(allOS)
-    print("Total OS : " , len(allOS))
+    try:
+        while True:
+            ret, img = cap.read()
+            if not ret:
+                print("Failed to capture image")
+                break
 
+            cv2.imshow("Img", img)
+            if cv2.waitKey(1000) == 13:  # Enter key to exit
+                break
 
-# In[4]:
+            hand = detector.findHands(img, draw=False)
+            if hand:
+                lmlist = hand[0]
+                if lmlist:
+                    fingerup = detector.fingersUp(lmlist)
+                    print(fingerup)
+                    if fingerup == [0, 1, 0, 0, 0]:
+                        print("Second finger detected...")
+                        terminate_instance()
+                    elif fingerup == [0, 1, 1, 0, 0]:
+                        print("Second and third fingers detected...")
+                        launch_instance()
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
-
-def TerminateOS():
-    if allOS:
-        myos = allOS.pop()
-        response = ec2.instances.filter(InstanceIds=[myos]).terminate()
-        
-        elb.deregister_targets(TargetGroupArn='arn:aws:elasticloadbalancing:ap-south-1:881559863141:targetgroup/testtg/5eb53fb428255398',
-    Targets=[
-        {
-            'Id': myos,
-        },
-       
-    ],
-                    )
-        
-        print("Remaining OS : " , len(allOS))
-        return response
-    else:
-        print("no more OS is Running")
-
-
-# In[5]:
-
-
-detector = HandDetector(maxHands=1,
-                        detectionCon=0.8)
-
-
-# In[6]:
-
-
-cap  = cv2.VideoCapture(0)
-
-
-# In[8]:
-
-
-while True:
-    ret, img = cap.read()
-    cv2.imshow("Img" , img)
-    if cv2.waitKey(1000) == 13:
-        break
-
-    hand = detector.findHands(img , draw=False)
-    if hand:
-        lmlist = hand[0]
-        if lmlist:
-            fingerup = detector.fingersUp(lmlist)
-            print(fingerup)
-            if fingerup == [0, 1, 0, 0, 0]:
-                print("sec finger ..")
-                TerminateOS()
-            
-            elif fingerup == [0, 1, 1, 0, 0]:
-                print("2 and 3 finger ..")
-                LaunchOS()
-
-            
-cv2.destroyAllWindows()
-       
-
-
-# In[9]:
-
-
-cap.release()   
+if __name__ == "__main__":
+    main()
