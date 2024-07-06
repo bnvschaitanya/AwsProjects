@@ -1,7 +1,5 @@
-##Scaling and Descaling of Instances using Hand Detection that are attached and detached to ELB Load Balancer
+#Scaling and Descaling of Instances using Hand Detection that are attached and detached to ELB Load Balancer
 #!/usr/bin/env python
-# coding: utf-8
-
 import cv2
 import boto3
 import time
@@ -18,38 +16,41 @@ INSTANCE_TYPE = "t2.micro"
 SECURITY_GROUP_ID = 'sg-0072cb1b72ca4eeaf'
 TARGET_GROUP_ARN = 'arn:aws:elasticloadbalancing:ap-south-1:881559863141:targetgroup/testtg/5eb53fb428255398'
 
-def launch_instance():
+def launch_instance(times):
     try:
-        instances = ec2.create_instances(
-            ImageId=AMI_ID,
-            MinCount=1,
-            MaxCount=1,
-            InstanceType=INSTANCE_TYPE,
-            SecurityGroupIds=[SECURITY_GROUP_ID],
-        )
-        instance_id = instances[0].id
-        allOS.append(instance_id)
-        time.sleep(30)  # Wait for the instance to initialize
-        elb.register_targets(
-            TargetGroupArn=TARGET_GROUP_ARN,
-            Targets=[{'Id': instance_id}],
-        )
-        print("Total OS : ", len(allOS))
-    except Exception as e:
-        print(f"Error launching instance: {e}")
-
-def terminate_instance():
-    try:
-        if allOS:
-            instance_id = allOS.pop()
-            ec2.instances.filter(InstanceIds=[instance_id]).terminate()
-            elb.deregister_targets(
+        for _ in range(times):
+            instances = ec2.create_instances(
+                ImageId=AMI_ID,
+                MinCount=1,
+                MaxCount=1,
+                InstanceType=INSTANCE_TYPE,
+                SecurityGroupIds=[SECURITY_GROUP_ID],
+            )
+            instance_id = instances[0].id
+            allOS.append(instance_id)
+            time.sleep(30)  # Wait for the instance to initialize
+            elb.register_targets(
                 TargetGroupArn=TARGET_GROUP_ARN,
                 Targets=[{'Id': instance_id}],
             )
-            print("Remaining OS : ", len(allOS))
-        else:
-            print("No more OS is running")
+            print(f"Instance {instance_id} launched. Total OS: {len(allOS)}")
+    except Exception as e:
+        print(f"Error launching instance: {e}")
+
+def terminate_instance(times):
+    try:
+        for _ in range(times):
+            if allOS:
+                instance_id = allOS.pop()
+                ec2.instances.filter(InstanceIds=[instance_id]).terminate()
+                elb.deregister_targets(
+                    TargetGroupArn=TARGET_GROUP_ARN,
+                    Targets=[{'Id': instance_id}],
+                )
+                print(f"Instance {instance_id} terminated. Remaining OS: {len(allOS)}")
+            else:
+                print("No more OS is running")
+                break
     except Exception as e:
         print(f"Error terminating instance: {e}")
 
@@ -70,21 +71,27 @@ def main():
             if cv2.waitKey(1000) == 13:  # Enter key to exit
                 break
 
-            hand = detector.findHands(img, draw=False)
-            if hand:
-                lmlist = hand[0]
+            hands = detector.findHands(img, draw=False)
+            if hands:
+                hand = hands[0]
+                lmlist = hand["lmList"]
+                handType = hand["type"]  # "Left" or "Right"
+
                 if lmlist:
-                    fingerup = detector.fingersUp(lmlist)
-                    print(fingerup)
-                    if fingerup == [0, 1, 0, 0, 0]:
-                        print("Second finger detected...")
-                        terminate_instance()
-                    elif fingerup == [0, 1, 1, 0, 0]:
-                        print("Second and third fingers detected...")
-                        launch_instance()
+                    fingerup = detector.fingersUp(hand)
+                    num_fingers_up = fingerup.count(1)
+                    print(f"HandType: {handType}, Fingers Up: {num_fingers_up}")
+
+                    if handType == "Right" and num_fingers_up > 0:
+                        print(f"Right hand detected with {num_fingers_up} fingers up. Launching instances...")
+                        launch_instance(num_fingers_up)
+                    elif handType == "Left" and num_fingers_up > 0:
+                        print(f"Left hand detected with {num_fingers_up} fingers up. Terminating instances...")
+                        terminate_instance(num_fingers_up)
     finally:
         cap.release()
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
+
